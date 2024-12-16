@@ -19,8 +19,13 @@ library("see")
 library("patchwork")
 
 generate_and_save_emmip <- function(rq_model,formula, file,vary_project_age_fix_fork_entropy) {
+  # formula: fork_entropy_scale ~ project_age_scale
+  # file: 输出的 CSV 文件名
+  
+  # 生成 emmip 数据
   emmip_data <- emmip(rq_model, formula, at = vary_project_age_fix_fork_entropy, plotit = FALSE)
   file <- paste("./", file, sep = "/")
+  # 将数据保存为 CSV 文件
   write.csv(as.data.table(emmip_data),
             file <- file,
             row.names = FALSE,
@@ -30,6 +35,9 @@ generate_and_save_emmip <- function(rq_model,formula, file,vary_project_age_fix_
 }
 
 generate_vary_list <- function(fork_entropy_rq2_c,scale_variable_name, scale_values,fork_entropy_scale="fork_entropy_rq2_scale") {
+  # scale_variable_name: 比例变量名称
+  # scale_values: 比例变量的值范围
+
   result_list <- list(
     fork_entropy_rq2_c,
     seq(

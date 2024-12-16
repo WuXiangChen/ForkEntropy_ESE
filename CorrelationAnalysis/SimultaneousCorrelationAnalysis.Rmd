@@ -30,16 +30,18 @@ library("MASS")
 library("mlmRev")
 library("agridat")
 library("MCMCglmm")
-library("scapeMCMC")
 library("see")
 library("patchwork")
+library("datawizard")
+library("writexl")
+library("openxlsx")
 ```
 
 ## Loading Dataset
 
 ```{r load_data, tidy=TRUE}
 raw_data <- read.csv(
-  "fork_entropy_dataset.csv",
+  "fork_entropy_dataset_extended2.csv",
   sep = ",",
   header = TRUE,
   encoding = "UTF-8",
@@ -57,6 +59,7 @@ get_sample_count_of_each_project <- function(data) {
 }
 
 get_sample_count_of_each_project(raw_data)
+
 ```
 
 ## Removing Outliers & Transforming Data
@@ -98,13 +101,13 @@ exp_data <- raw_data %>% filter(
   num_forks_log_scale = scale(log(num_forks)),
   num_files_log_scale = scale(log(num_files)),
   project_age_scale = scale(project_age),
-  num_stars_log_scale = scale(log(num_stars + 0.5)),
+  num_stars_log_scale = scale(log(num_stars + 1)),
   ratio_old_volunteers_log_scale = scale(log(ratio_old_volunteers + 5e-4)),
   fork_entropy_scale = scale(fork_entropy),
   num_integrated_commits.t = num_integrated_commits + 1,
   num_forks_rq2_log_scale = scale(log(num_forks_rq2)),
   num_files_rq2_log_scale = scale(log(num_files_rq2)),
-  ratio_old_volunteers_rq2_log_scale =  scale(log(ratio_old_volunteers_rq2 + 1e-3)),
+  ratio_old_volunteers_rq2_log_scale = scale(log(ratio_old_volunteers_rq2 + 1e-3)),
   ratio_prs_with_tests_scale = scale(ratio_prs_with_tests),
   ratio_prs_with_hot_files_scale = scale(ratio_prs_with_hot_files),
   fork_entropy_rq2_scale = scale(fork_entropy_rq2),
@@ -116,7 +119,7 @@ rm(nic.q, nbi.q, m)
 ```
 
 ```{r diagnose_data_2, tidy=TRUE, echo=FALSE, fig.width=6/2.54, fig.height=6/2.54, out.width="30%", out.height="30%"}
-variables <- colnames(exp_data)[2:ncol(exp_data)]
+variables <- colnames(exp_data)[3:ncol(exp_data)]
 for (variable in variables) {
   hist(exp_data[,variable], main = "", xlab = variable)
 }
@@ -148,7 +151,8 @@ get_points <- function(x, n = 3) {
   x_up_r <- round(x_up, digits = 1)
   
   if (n == 3) {
-    points <- c(x_bt_r, x_ct_r, x_up_r)
+    # points <- c(x_bt_r, x_ct_r, x_up_r)
+    points <- c(x_m1_r, x_ct_r, x_p1_r)
   } else if (n == 5) {
     points <- c(x_bt_r, x_m1_r, x_ct_r, x_p1_r, x_up_r)
   } else {
@@ -156,6 +160,8 @@ get_points <- function(x, n = 3) {
   }
   return(points)
 }
+colnames(exp_data)
+
 ```
 
 ```{r rq1.0, tidy=TRUE}
@@ -175,13 +181,13 @@ rq1.model <- glmer(
     (1 + num_forks_log_scale | project),
   data = exp_data,
   family = poisson(link = "log"))
-vif(rq1.model)
+#vif(rq1.model)
 summary(rq1.model)
 model_performance(rq1.model)
 a <- Anova(rq1.model, type = "II")
 print(a)
-round(a$Chisq / sum(a$Chisq, na.rm = TRUE), 3)
-rm(a)
+#round(a$Chisq / sum(a$Chisq, na.rm = TRUE), 3)
+#rm(a)
 ```
 
 ```{r rq1.1, tidy=TRUE, echo=FALSE, fig.width=12/2.54, fig.height=12/2.54, out.width="45%", out.height="45%"}
@@ -189,67 +195,104 @@ check_model(rq1.model)
 ```
 
 ```{r rq1.2, tidy=TRUE, echo=FALSE, out.width="30%", out.height="30%"}
+# Get points for each factor
 num_forks_c <- get_points(exp_data$num_forks_log_scale)
 project_age_c <- get_points(exp_data$project_age_scale)
+num_files_c <- get_points(exp_data$num_files_log_scale)
+num_stars_c <- get_points(exp_data$num_stars_log_scale)
+ratio_old_volunteers_c <- get_points(exp_data$ratio_old_volunteers_log_scale)
+
 fork_entropy_c <- get_points(exp_data$fork_entropy_scale)
 
-vary_num_forks_fix_fork_entropy <- list(
-  fork_entropy_scale=fork_entropy_c,
-  num_forks_log_scale=seq(
-    num_forks_c[[1]], num_forks_c[[length(num_forks_c)]], by = 0.1))
-emmip(rq1.model, fork_entropy_scale ~ num_forks_log_scale,
-      at = vary_num_forks_fix_fork_entropy)
-vary_num_forks_fix_fork_entropy.data <- emmip(
-  rq1.model, fork_entropy_scale ~ num_forks_log_scale,
-  at = vary_num_forks_fix_fork_entropy, plotit = FALSE)
-write.csv(vary_num_forks_fix_fork_entropy.data,
-          file = "rq1_vary_num_forks_fix_fork_entropy.csv",
-          row.names = FALSE, fileEncoding = "UTF-8")
+# Create a new workbook
+wb <- createWorkbook()
 
+# Interaction between num_forks and fork_entropy
+vary_num_forks_fix_fork_entropy <- list(
+  fork_entropy_scale = fork_entropy_c,
+  num_forks_log_scale = seq(num_forks_c[[1]], num_forks_c[[length(num_forks_c)]], by = 0.1)
+)
+emmip(rq1.model, fork_entropy_scale ~ num_forks_log_scale, at = vary_num_forks_fix_fork_entropy)
+vary_num_forks_fix_fork_entropy.data <- emmip(rq1.model, fork_entropy_scale ~ num_forks_log_scale, at = vary_num_forks_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "num_forks_vs_fork_entropy")
+writeData(wb, "num_forks_vs_fork_entropy", vary_num_forks_fix_fork_entropy.data)
+
+# Interaction between project_age and fork_entropy
 vary_project_age_fix_fork_entropy <- list(
-  fork_entropy_scale=fork_entropy_c,
-  project_age_scale=seq(
-    project_age_c[[1]], project_age_c[[length(project_age_c)]], by = 0.1))
-emmip(rq1.model, fork_entropy_scale ~ project_age_scale,
-      at = vary_project_age_fix_fork_entropy)
-vary_project_age_fix_fork_entropy.data <- emmip(
-  rq1.model, fork_entropy_scale ~ project_age_scale,
-  at = vary_project_age_fix_fork_entropy, plotit = FALSE)
-write.csv(vary_project_age_fix_fork_entropy.data,
-          file = "rq1_vary_project_age_fix_fork_entropy.csv",
-          row.names = FALSE, fileEncoding = "UTF-8")
+  fork_entropy_scale = fork_entropy_c,
+  project_age_scale = seq(project_age_c[[1]], project_age_c[[length(project_age_c)]], by = 0.1)
+)
+emmip(rq1.model, fork_entropy_scale ~ project_age_scale, at = vary_project_age_fix_fork_entropy)
+vary_project_age_fix_fork_entropy.data <- emmip(rq1.model, fork_entropy_scale ~ project_age_scale, at = vary_project_age_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "project_age_vs_fork_entropy")
+writeData(wb, "project_age_vs_fork_entropy", vary_project_age_fix_fork_entropy.data)
+
+# Interaction between num_files and fork_entropy
+vary_num_files_fix_fork_entropy <- list(
+  fork_entropy_scale = fork_entropy_c,
+  num_files_log_scale = seq(num_files_c[[1]], num_files_c[[length(num_files_c)]], by = 0.1)
+)
+emmip(rq1.model, fork_entropy_scale ~ num_files_log_scale, at = vary_num_files_fix_fork_entropy)
+vary_num_files_fix_fork_entropy.data <- emmip(rq1.model, fork_entropy_scale ~ num_files_log_scale, at = vary_num_files_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "num_files_vs_fork_entropy")
+writeData(wb, "num_files_vs_fork_entropy", vary_num_files_fix_fork_entropy.data)
+
+# Interaction between num_stars and fork_entropy
+vary_num_stars_fix_fork_entropy <- list(
+  fork_entropy_scale = fork_entropy_c,
+  num_stars_log_scale = seq(num_stars_c[[1]], num_stars_c[[length(num_stars_c)]], by = 0.1)
+)
+emmip(rq1.model, fork_entropy_scale ~ num_stars_log_scale, at = vary_num_stars_fix_fork_entropy)
+vary_num_stars_fix_fork_entropy.data <- emmip(rq1.model, fork_entropy_scale ~ num_stars_log_scale, at = vary_num_stars_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "num_stars_vs_fork_entropy")
+writeData(wb, "num_stars_vs_fork_entropy", vary_num_stars_fix_fork_entropy.data)
+
+# Interaction between ratio_old_volunteers and fork_entropy
+vary_ratio_old_volunteers_fix_fork_entropy <- list(
+  fork_entropy_scale = fork_entropy_c,
+  ratio_old_volunteers_log_scale = seq(ratio_old_volunteers_c[[1]], ratio_old_volunteers_c[[length(ratio_old_volunteers_c)]], by = 0.1)
+)
+emmip(rq1.model, fork_entropy_scale ~ ratio_old_volunteers_log_scale, at = vary_ratio_old_volunteers_fix_fork_entropy)
+vary_ratio_old_volunteers_fix_fork_entropy.data <- emmip(rq1.model, fork_entropy_scale ~ ratio_old_volunteers_log_scale, at = vary_ratio_old_volunteers_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "ratio_oldCon_vs_fork_entropy")
+writeData(wb, "ratio_oldCon_vs_fork_entropy", vary_ratio_old_volunteers_fix_fork_entropy.data)
+
+# Save the workbook to a file
+# saveWorkbook(wb, file = "data/increasedOtherFactors'Interations/rq1_fork_entropy_interactions.xlsx", overwrite = TRUE)
 
 rm(num_forks_c, project_age_c, fork_entropy_c,
    vary_num_forks_fix_fork_entropy, vary_num_forks_fix_fork_entropy.data,
    vary_project_age_fix_fork_entropy, vary_project_age_fix_fork_entropy.data)
+
 ```
 
 ## RQ2: How does fork entropy influence the acceptance rate of external pull-requests?
 
 ```{r rq2.0, tidy=TRUE}
+
 rq2.model <- glmer(
   formula = ratio_merged_prs ~ 
     num_forks_rq2_log_scale + 
-    # fork_entropy_rq2_scale:num_forks_rq2_log_scale + 
     num_files_rq2_log_scale + 
-    fork_entropy_rq2_scale:num_files_rq2_log_scale + 
-    project_age_scale + 
-    fork_entropy_rq2_scale:project_age_scale + 
-    ratio_old_volunteers_rq2_log_scale + 
-    fork_entropy_rq2_scale:ratio_old_volunteers_rq2_log_scale + 
-    ratio_prs_with_tests_scale + 
-    fork_entropy_rq2_scale:ratio_prs_with_tests_scale + 
-    ratio_prs_with_hot_files_scale + 
-    fork_entropy_rq2_scale:ratio_prs_with_hot_files_scale + 
-    fork_entropy_rq2_scale + 
-    (1 + num_forks_rq2_log_scale | project),
+    fork_entropy_rq2_scale:num_files_rq2_log_scale +
+    project_age_scale +
+    fork_entropy_rq2_scale:project_age_scale +
+    ratio_old_volunteers_rq2_log_scale +
+    fork_entropy_rq2_scale:ratio_old_volunteers_rq2_log_scale +
+    ratio_prs_with_tests_scale +
+    fork_entropy_rq2_scale:ratio_prs_with_tests_scale +
+    ratio_prs_with_hot_files_scale +
+    fork_entropy_rq2_scale:ratio_prs_with_hot_files_scale +
+    fork_entropy_rq2_scale+
+    (1 + project_age_scale | project),
   data = exp_data,
   weights = num_closed_prs,
-  family = binomial(link = "logit"))
+  family = binomial(link = "logit"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 10000))
+  )
 vif(rq2.model)
 summary(rq2.model)
 model_performance(rq2.model)
-performance_accuracy(rq2.model)
 a <- Anova(rq2.model, type = "II")
 print(a)
 round(a$Chisq / sum(a$Chisq, na.rm = TRUE), 3)
@@ -263,38 +306,68 @@ check_model(rq2.model)
 ```{r rq2.2, tidy=TRUE, echo=FALSE, out.width="45%", out.height="45%"}
 ratio_prs_with_tests_c  <- get_points(exp_data$ratio_prs_with_tests_scale)
 ratio_prs_with_hot_files_scale_c <- get_points(exp_data$ratio_prs_with_hot_files_scale)
+
+num_forks_rq2_c  <- get_points(exp_data$num_forks_rq2_log_scale)
+num_files_rq2_c  <- get_points(exp_data$num_files_rq2_log_scale)
+project_age_rq2_c  <- get_points(exp_data$project_age_scale)
+ratio_old_volunteers_c <- get_points(exp_data$ratio_old_volunteers_rq2_log_scale)
+
 fork_entropy_rq2_c <- get_points(exp_data$fork_entropy_rq2_scale)
+# Create a new workbook
+wb <- createWorkbook()
 
-vary_ratio_prs_with_tests_fix_fork_entropy <- list(
-  fork_entropy_rq2_scale=fork_entropy_rq2_c,
-  ratio_prs_with_tests_scale=seq(
-    ratio_prs_with_tests_c[[1]],
-    ratio_prs_with_tests_c[[length(ratio_prs_with_tests_c)]], by = 0.1))
-emmip(rq2.model,
-      fork_entropy_rq2_scale ~ ratio_prs_with_tests_scale,
-      at = vary_ratio_prs_with_tests_fix_fork_entropy)
-vary_ratio_prs_with_tests_fix_fork_entropy.data <- emmip(
-  rq2.model, fork_entropy_rq2_scale ~ ratio_prs_with_tests_scale,
-  at = vary_ratio_prs_with_tests_fix_fork_entropy, plotit = FALSE)
-write.csv(vary_ratio_prs_with_tests_fix_fork_entropy.data,
-          file = "rq2_vary_ratio_prs_with_tests_fix_fork_entropy.csv",
-          row.names = FALSE, fileEncoding = "UTF-8")
+# Interaction between ratio_prs_with_tests and fork_entropy
+vary_ratio_prs_with_tests_fix_fork_entropy <- list(fork_entropy_rq2_scale = fork_entropy_rq2_c,ratio_prs_with_tests_scale = seq(ratio_prs_with_tests_c[[1]], ratio_prs_with_tests_c[[length(ratio_prs_with_tests_c)]], by = 0.1))
+emmip(rq2.model, fork_entropy_rq2_scale ~ ratio_prs_with_tests_scale, at = vary_ratio_prs_with_tests_fix_fork_entropy)
+vary_ratio_prs_with_tests_fix_fork_entropy.data <- emmip(rq2.model, fork_entropy_rq2_scale ~ ratio_prs_with_tests_scale, at = vary_ratio_prs_with_tests_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "RatioPRsTest_vs_fork_entropy")
+writeData(wb, "RatioPRsTest_vs_fork_entropy", vary_ratio_prs_with_tests_fix_fork_entropy.data)
 
-vary_ratio_prs_with_hot_files_fix_fork_entropy <- list(
-  fork_entropy_rq2_scale=fork_entropy_rq2_c,
-  ratio_prs_with_hot_files_scale=seq(
-    ratio_prs_with_hot_files_scale_c[[1]],
-    ratio_prs_with_hot_files_scale_c[[length(ratio_prs_with_hot_files_scale_c)]],
-    by = 0.1))
-emmip(rq2.model,
-      fork_entropy_rq2_scale ~ ratio_prs_with_hot_files_scale,
-      at = vary_ratio_prs_with_hot_files_fix_fork_entropy)
-vary_ratio_prs_with_hot_files_fix_fork_entropy.data <- emmip(
-  rq2.model, fork_entropy_rq2_scale ~ ratio_prs_with_hot_files_scale,
-  at = vary_ratio_prs_with_hot_files_fix_fork_entropy, plotit = FALSE)
-write.csv(vary_ratio_prs_with_hot_files_fix_fork_entropy.data,
-          file = "rq2_vary_ratio_prs_with_hot_files_fix_fork_entropy.csv",
-          row.names = FALSE, fileEncoding = "UTF-8")
+# Interaction between ratio_prs_with_hot_files and fork_entropy
+vary_ratio_prs_with_hot_files_fix_fork_entropy <- list(fork_entropy_rq2_scale = fork_entropy_rq2_c,
+ratio_prs_with_hot_files_scale = seq(ratio_prs_with_hot_files_scale_c[[1]], ratio_prs_with_hot_files_scale_c[[length(ratio_prs_with_hot_files_scale_c)]], by = 0.1))
+emmip(rq2.model, fork_entropy_rq2_scale ~ ratio_prs_with_hot_files_scale, at = vary_ratio_prs_with_hot_files_fix_fork_entropy)
+vary_ratio_prs_with_hot_files_fix_fork_entropy.data <- emmip(rq2.model, fork_entropy_rq2_scale ~ ratio_prs_with_hot_files_scale, at = vary_ratio_prs_with_hot_files_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "RatioPrsHotF_vs_fork_entropy")
+writeData(wb, "RatioPrsHotF_vs_fork_entropy", vary_ratio_prs_with_hot_files_fix_fork_entropy.data)
+
+# Interaction between num_forks_rq2 and fork_entropy
+vary_num_forks_rq2_fix_fork_entropy <- list(fork_entropy_rq2_scale = fork_entropy_rq2_c,num_forks_rq2_log_scale = seq(num_forks_rq2_c[[1]], num_forks_rq2_c[[length(num_forks_rq2_c)]], by = 0.1))
+emmip(rq2.model, fork_entropy_rq2_scale ~ num_forks_rq2_log_scale, at = vary_num_forks_rq2_fix_fork_entropy)
+vary_num_forks_rq2_fix_fork_entropy.data <- emmip(rq2.model, fork_entropy_rq2_scale ~ num_forks_rq2_log_scale, at = vary_num_forks_rq2_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "num_forks_rq2_vs_fork_entropy")
+writeData(wb, "num_forks_rq2_vs_fork_entropy", vary_num_forks_rq2_fix_fork_entropy.data)
+
+# Interaction between num_files_rq2 and fork_entropy
+vary_num_files_rq2_fix_fork_entropy <- list(fork_entropy_rq2_scale = fork_entropy_rq2_c,num_files_rq2_log_scale = seq(num_files_rq2_c[[1]], num_files_rq2_c[[length(num_files_rq2_c)]], by = 0.1))
+emmip(rq2.model, fork_entropy_rq2_scale ~ num_files_rq2_log_scale, at = vary_num_files_rq2_fix_fork_entropy)
+vary_num_files_rq2_fix_fork_entropy.data <- emmip(rq2.model, fork_entropy_rq2_scale ~ num_files_rq2_log_scale, at = vary_num_files_rq2_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "num_files_vs_fork_entropy")
+writeData(wb, "num_files_vs_fork_entropy", vary_num_files_rq2_fix_fork_entropy.data)
+
+# Interaction between project_age_rq2 and fork_entropy
+vary_project_age_rq2_fix_fork_entropy <- list(
+  fork_entropy_rq2_scale = fork_entropy_rq2_c,
+  project_age_scale = seq(project_age_rq2_c[[1]], project_age_rq2_c[[length(project_age_rq2_c)]], by = 0.1)
+)
+emmip(rq2.model, fork_entropy_rq2_scale ~ project_age_scale, at = vary_project_age_rq2_fix_fork_entropy)
+vary_project_age_rq2_fix_fork_entropy.data <- emmip(rq2.model, fork_entropy_rq2_scale ~ project_age_scale, at = vary_project_age_rq2_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "project_age_vs_fork_entropy")
+writeData(wb, "project_age_vs_fork_entropy", vary_project_age_rq2_fix_fork_entropy.data)
+
+# Interaction between ratio_old_volunteers and fork_entropy
+vary_ratio_old_volunteers_rq2_fix_fork_entropy <- list(
+  fork_entropy_rq2_scale = fork_entropy_rq2_c,
+  ratio_old_volunteers_rq2_log_scale = seq(ratio_old_volunteers_c[[1]], ratio_old_volunteers_c[[length(ratio_old_volunteers_c)]], by = 0.1)
+)
+emmip(rq2.model, fork_entropy_rq2_scale ~ ratio_old_volunteers_rq2_log_scale, at = vary_ratio_old_volunteers_rq2_fix_fork_entropy)
+vary_ratio_old_volunteers_rq2_fix_fork_entropy.data <- emmip(rq2.model, fork_entropy_rq2_scale ~ ratio_old_volunteers_rq2_log_scale, at = vary_ratio_old_volunteers_rq2_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "RatioOldVolun_vs_fork_entropy")
+writeData(wb, "RatioOldVolun_vs_fork_entropy", vary_ratio_old_volunteers_rq2_fix_fork_entropy.data)
+
+# Save the workbook to a file
+# saveWorkbook(wb, file = "data/increasedOtherFactors'Interations/ori_rq2_fork_entropy_interactions.xlsx", overwrite = TRUE)
+
 
 rm(ratio_prs_with_tests_c, ratio_prs_with_hot_files_scale_c, fork_entropy_rq2_c,
    vary_ratio_prs_with_tests_fix_fork_entropy,
@@ -335,20 +408,56 @@ check_model(rq3.model)
 
 ```{r rq3.2, tidy=TRUE, echo=FALSE, out.width="45%", out.height="45%"}
 num_forks_c <- get_points(exp_data$num_forks_log_scale)
-fork_entropy_c <- get_points(exp_data$fork_entropy_scale)
+num_stars_c <- get_points(exp_data$num_stars_log_scale)
+num_files_c <- get_points(exp_data$num_files_log_scale)
+project_age_c <- get_points(exp_data$project_age_scale)
 
+fork_entropy_c <- get_points(exp_data$fork_entropy_scale)
+# Create a new workbook
+wb <- createWorkbook()
+
+# Interaction between num_forks and fork_entropy
 vary_num_forks_fix_fork_entropy <- list(
-  fork_entropy_scale=fork_entropy_c,
-  num_forks_log_scale=seq(
-    num_forks_c[[1]], num_forks_c[[length(num_forks_c)]], by = 0.1))
-emmip(rq3.model, fork_entropy_scale ~ num_forks_log_scale,
-      at = vary_num_forks_fix_fork_entropy)
-vary_num_forks_fix_fork_entropy.data <- emmip(
-  rq3.model, fork_entropy_scale ~ num_forks_log_scale,
-  at = vary_num_forks_fix_fork_entropy, plotit = FALSE)
-write.csv(vary_num_forks_fix_fork_entropy.data,
-          file = "rq3_vary_num_forks_fix_fork_entropy.csv",
-          row.names = FALSE, fileEncoding = "UTF-8")
+  fork_entropy_scale = fork_entropy_c,
+  num_forks_log_scale = seq(num_forks_c[[1]], num_forks_c[[length(num_forks_c)]], by = 0.1)
+)
+emmip(rq3.model, fork_entropy_scale ~ num_forks_log_scale, at = vary_num_forks_fix_fork_entropy)
+vary_num_forks_fix_fork_entropy.data <- emmip(rq3.model, fork_entropy_scale ~ num_forks_log_scale, at = vary_num_forks_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "num_forks_vs_fork_entropy")
+writeData(wb, "num_forks_vs_fork_entropy", vary_num_forks_fix_fork_entropy.data)
+
+# Interaction between num_stars and fork_entropy
+vary_num_stars_fix_fork_entropy <- list(
+  fork_entropy_scale = fork_entropy_c,
+  num_stars_log_scale = seq(num_stars_c[[1]], num_stars_c[[length(num_stars_c)]], by = 0.1)
+)
+emmip(rq3.model, fork_entropy_scale ~ num_stars_log_scale, at = vary_num_stars_fix_fork_entropy)
+vary_num_stars_fix_fork_entropy.data <- emmip(rq3.model, fork_entropy_scale ~ num_stars_log_scale, at = vary_num_stars_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "num_stars_vs_fork_entropy")
+writeData(wb, "num_stars_vs_fork_entropy", vary_num_stars_fix_fork_entropy.data)
+
+# Interaction between num_files and fork_entropy
+vary_num_files_fix_fork_entropy <- list(
+  fork_entropy_scale = fork_entropy_c,
+  num_files_log_scale = seq(num_files_c[[1]], num_files_c[[length(num_files_c)]], by = 0.1)
+)
+emmip(rq3.model, fork_entropy_scale ~ num_files_log_scale, at = vary_num_files_fix_fork_entropy)
+vary_num_files_fix_fork_entropy.data <- emmip(rq3.model, fork_entropy_scale ~ num_files_log_scale, at = vary_num_files_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "num_files_vs_fork_entropy")
+writeData(wb, "num_files_vs_fork_entropy", vary_num_files_fix_fork_entropy.data)
+
+# Interaction between project_age and fork_entropy
+vary_project_age_fix_fork_entropy <- list(
+  fork_entropy_scale = fork_entropy_c,
+  project_age_scale = seq(project_age_c[[1]], project_age_c[[length(project_age_c)]], by = 0.1)
+)
+emmip(rq3.model, fork_entropy_scale ~ project_age_scale, at = vary_project_age_fix_fork_entropy)
+vary_project_age_fix_fork_entropy.data <- emmip(rq3.model, fork_entropy_scale ~ project_age_scale, at = vary_project_age_fix_fork_entropy, plotit = FALSE)
+addWorksheet(wb, "project_age_vs_fork_entropy")
+writeData(wb, "project_age_vs_fork_entropy", vary_project_age_fix_fork_entropy.data)
+
+# Save the workbook to a file
+# saveWorkbook(wb, file = "data/increasedOtherFactors'Interations/ori_rq3_fork_entropy_interactions.xlsx", overwrite = TRUE)
 
 rm(num_forks_c, fork_entropy_c, vary_num_forks_fix_fork_entropy,
    vary_num_forks_fix_fork_entropy.data)

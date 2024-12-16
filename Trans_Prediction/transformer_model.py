@@ -6,6 +6,7 @@ class Encoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, nhead, output_dim, num_layers):
         super().__init__()
         self.self_attn = MultiHeadAttention(input_dim, nhead)
+        # 这里加上一层下采样，使得输出的维度和输出的维度一致
         self.feed_forward = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
@@ -13,7 +14,8 @@ class Encoder(nn.Module):
         )
 
     def forward(self, src):
-        src = src.permute(1, 0, 2)
+        src = src.permute(1, 0, 2)  # Transformer expects seq_len, batch, input_dim
+        # 这里自动调用已定义模型的forward函数
         attn_output, _ = self.self_attn(q=src,k= src,v= src)
         output = self.feed_forward(attn_output)
         return output
@@ -22,6 +24,8 @@ class Decoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, nhead, num_layers):
         super().__init__()
         self.self_attn = MultiHeadAttention(input_dim, nhead)
+        # 在这里添加Masked Multi-head Attention
+
         self.multihead_attn = MultiHeadAttention(input_dim, nhead)
         self.feed_forward = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
